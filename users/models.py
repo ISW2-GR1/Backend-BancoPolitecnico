@@ -40,10 +40,16 @@ class UserManager(BaseUserManager):
 class User(AbstractBaseUser, PermissionsMixin):
     name = models.CharField(max_length=50)
     last_name = models.CharField(max_length=50)
-    username = models.CharField(max_length=50)
+    username = models.CharField(max_length=50, unique=True)
     birthday = models.DateField(null=True)
     email = models.EmailField(max_length=150, unique=True, blank=False)
     password = models.CharField(max_length=150)
+    cedula = models.CharField(max_length=10, unique=True) 
+    phone = models.CharField(max_length=10, blank=True)
+    address = models.CharField(max_length=150, blank=True)
+    city = models.CharField(max_length=50, blank=True)
+    country = models.CharField(max_length=50, blank=True) 
+    role = models.CharField(max_length=50, default='2')
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
 
