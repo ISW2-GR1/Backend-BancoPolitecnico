@@ -9,3 +9,4 @@ packaging==24.1
 pytz==2024.1
 sqlparse==0.5.0
 gunicorn
+psycopg2==2.9.9
