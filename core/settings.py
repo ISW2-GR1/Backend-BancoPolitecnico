@@ -25,8 +25,11 @@ SECRET_KEY = 'django-insecure-4c2du36(uptm$rl$uc!rr%ne9fjw4w+3se0#0bimlek2zlkq+x
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
-
+ALLOWED_HOSTS = ['*']
+CSRF_TRUSTED_ORIGINS = [
+    'https://banco-politecnico.beta.ec',
+    'https://banco-politecnico.dev.ec'
+]
 
 # Application definition
 
@@ -134,3 +137,10 @@ STATIC_URL = '/static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 AUTH_USER_MODEL = "users.user"
 
+
+# Email
+EMAIL_USE_TLS = True
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_HOST_USER = 'notificaciones@bancoPolitecino.com'
+EMAIL_HOST_PASSWORD = 'tmprvbgfixmpsaok'
+EMAIL_PORT = 587

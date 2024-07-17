@@ -1,3 +1,10 @@
-__pycache__
-.venv
-database.sqlite
+# Environments
+bin
+include
+lib
+pyvenv.cfg
+.DS_Store
+
+# Ignorar archivos .pyc y carpetas __pycache__
+*.pyc
+__pycache__/
