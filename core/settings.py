@@ -27,11 +27,11 @@ DEBUG = True
 
 ALLOWED_HOSTS = ['*']
 CSRF_TRUSTED_ORIGINS = [
-    'https://banco-politecnico.beta.ec',
-    'https://banco-politecnico.dev.ec',
+    'https://banco-politecnico.online ',
+    'https://banco-politecnico.online ',
     'https://banco-politecnico.ec',
     'http://localhost:3000',
-    'http://api.banco-politecnico.ec',
+    'http://banco-politecnico.online ',
 ]
 
 # Application definition
