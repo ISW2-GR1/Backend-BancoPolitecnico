@@ -34,6 +34,10 @@ CSRF_TRUSTED_ORIGINS = [
     'http://banco-politecnico.online ',
 ]
 
+CORS_ALLOWED_ORIGINS = [
+    'http://localhost:4200',  # O la URL de tu frontend
+]
+
 # Application definition
 
 INSTALLED_APPS = [
