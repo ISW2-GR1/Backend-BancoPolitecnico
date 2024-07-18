@@ -51,10 +51,11 @@ INSTALLED_APPS = [
     # Local Variables
     "rest_framework",
     "rest_framework.authtoken",
+    'corsheaders',
+
 
     # Apps defined in this directory
     "users.apps.UsersConfig",
-
 ]
 
 MIDDLEWARE = [
@@ -65,6 +66,8 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
+
 ]
 
 ROOT_URLCONF = 'core.urls'
