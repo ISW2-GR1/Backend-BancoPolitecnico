@@ -145,6 +145,7 @@ USE_TZ = True
 # settings.py
 STATIC_URL = '/static/'
 STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')]
+STATIC_ROOT = os.path.join(BASE_DIR,'storage','static' ) #Name of the path we can find all the static files recopiled
 
 
 #MEDIA CONFIG
