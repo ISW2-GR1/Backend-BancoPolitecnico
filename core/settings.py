@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "rest_framework.authtoken",
     'corsheaders',
+    'rest_framework_simplejwt',
 
 
     # Apps defined in this directory
@@ -165,3 +166,10 @@ EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_HOST_USER = 'notificaciones@bancoPolitecino.com'
 EMAIL_HOST_PASSWORD = 'tmprvbgfixmpsaok'
 EMAIL_PORT = 587
+
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ],
+}
