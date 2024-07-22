@@ -14,9 +14,9 @@ import logging
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = get_user_model()
-        fields = ['name', 'last_name', 'username', 'email', 'password', 'cedula', 'phone', 'address', 'city', 'country', 'birthday', 'role']
+        fields = ['name', 'last_name', 'username', 'email', 'password', 'cedula', 'phone', 'address', 'city', 'country', 'birthday', 'role', 'email_confirmed']
         extra_kwargs = {'password': {'write_only': True}}
-    
+
     def validate_password(self, value):
         if len(value) < 8:
             raise ValidationError("Password must be at least 8 characters long.")
@@ -27,8 +27,9 @@ class UserSerializer(serializers.ModelSerializer):
         if not re.search(r'[!@#$%^&*(),.?":{}|<>]', value):
             raise ValidationError("Password must contain at least one special character.")
         return value
-    
+
     def create(self, validated_data):
+        validated_data['email_confirmed'] = False
         return get_user_model().objects.create_user(**validated_data)
 
 class AuthTokenSerializer(serializers.Serializer):
