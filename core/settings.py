@@ -163,7 +163,7 @@ AUTH_USER_MODEL = "users.user"
 # Email
 EMAIL_USE_TLS = True
 EMAIL_HOST = 'smtp.gmail.com'
-EMAIL_HOST_USER = 'notificaciones@bancoPolitecino.com'
+EMAIL_HOST_USER = 'notificaciones@billusos.com'
 EMAIL_HOST_PASSWORD = 'tmprvbgfixmpsaok'
 EMAIL_PORT = 587
 
