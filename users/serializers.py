@@ -9,7 +9,8 @@ import re
 from django.core.mail import send_mail
 from utils.some_util_file import validate_ecuadorian_cedula
 import logging
-
+from .models import BankAccount, Contact
+from .signals import generate_unique_account_number
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -30,6 +31,25 @@ class UserSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         return get_user_model().objects.create_user(**validated_data)
+
+class BankAccountSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BankAccount
+        fields = ['id', 'user', 'account_number', 'balance', 'is_active']
+        read_only_fields = ['account_number', 'balance', 'user']
+
+    def create(self, validated_data):
+        user = self.context['request'].user
+        validated_data.pop('user', None)
+        validated_data.pop('account_number', None)
+        account_number = generate_unique_account_number()
+        bank_account = BankAccount.objects.create(user=user, account_number=account_number, **validated_data)
+        return bank_account
+
+class ContactSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Contact
+        fields = ['id', 'owner', 'contact', 'contact_account_number']
 
 class AuthTokenSerializer(serializers.Serializer):
     email = serializers.EmailField()

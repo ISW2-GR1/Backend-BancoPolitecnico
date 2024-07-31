@@ -6,7 +6,7 @@ pyvenv.cfg
 .DS_Store
 .venv
 ven
-
+env
 env/Scripts
 # Ignorar archivos .pyc y carpetas __pycache__
 *.pyc

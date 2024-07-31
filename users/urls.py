@@ -1,6 +1,7 @@
-from django.urls import path
+from django.urls import path,include
 from users import views
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+
 urlpatterns = [
     path("register/", views.CreateUserView.as_view(), name="register"),
     path("login/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
@@ -12,4 +13,6 @@ urlpatterns = [
     path("password-reset-confirm/", views.PasswordResetConfirmView.as_view(), name="password_reset_confirm"),
     path("email-confirm/", views.EmailConfirmationView.as_view(), name="email_confirm"),
     path("verify-cedula/", views.CedulaVerificationView.as_view(), name="verify_cedula"),
+    path("create-bank-account/", views.CreateBankAccountView.as_view(), name="create_bank_account"),
+    path("transfer-money/", views.TransferMoneyView.as_view(), name="transfer_money"),
 ]
