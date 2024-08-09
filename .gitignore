@@ -11,3 +11,5 @@ env/Scripts
 # Ignorar archivos .pyc y carpetas __pycache__
 *.pyc
 __pycache__/
+
+*__pycache__
