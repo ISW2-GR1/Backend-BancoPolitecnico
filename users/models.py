@@ -13,7 +13,6 @@ import string
 from django.core.mail import EmailMessage
 
 class UserManager(BaseUserManager):
-    
     def create_user(self, email, password, **extra_fields):
         if not email:
             raise ValueError('You must provide an email address.')
@@ -22,10 +21,7 @@ class UserManager(BaseUserManager):
         user.confirmation_token = secrets.token_hex(16)
         user.is_active = False
         user.save(using=self._db)
-
-        # Send confirmation email
         subject = 'Confirmación de Correo Electrónico'
-        # message = f'Please use this link to confirm your email: https://www.banco-politecnico.online/confirm/{user.confirmation_token}/'
         message = f"""
             <html>
             <head>
@@ -80,7 +76,7 @@ class UserManager(BaseUserManager):
             """
         from_email = 'info.iso50001@inn-energy.net'
         email = EmailMessage(subject, message, from_email, [email])
-        email.content_subtype = 'html'  # Especifica que el contenido es HTML
+        email.content_subtype = 'html'
         email.send()
 
         return user

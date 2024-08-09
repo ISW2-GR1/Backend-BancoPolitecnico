@@ -13,7 +13,10 @@ urlpatterns = [
     path("password-reset-confirm/", views.PasswordResetConfirmView.as_view(), name="password_reset_confirm"),
     path("email-confirm/", views.EmailConfirmationView.as_view(), name="email_confirm"),
     path("verify-cedula/", views.CedulaVerificationView.as_view(), name="verify_cedula"),
-    path("create-bank-account/", views.CreateBankAccountView.as_view(), name="create_bank_account"),
     path('transfer-money/', views.TransferView.as_view(), name='transfer_money'),
     path('confirm-transfer/', views.ConfirmTransferView.as_view(), name='confirm_transfer'),
+    
+    #Routes of create account with cedula verification
+    path('verify-cedula-and-send-code/', views.VerifyCedulaAndSendCodeView.as_view(), name='verify_cedula_and_send_code'),
+    path('verify-code-and-create-account/', views.VerifyCodeAndCreateAccountView.as_view(), name='verify_code_and_create_account'),
 ]

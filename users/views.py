@@ -1,5 +1,5 @@
 from django.contrib.auth import get_user_model, authenticate
-from rest_framework import serializers, generics, permissions, status, viewsets
+from rest_framework import generics, permissions, status, viewsets
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -18,22 +18,23 @@ from .models import BankAccount, Transfer,Contact
 from .signals import generate_unique_account_number
 from .models import User
 
-# CREATE USER
+###################################################################################
+##### CREATE USER
 class CreateUserView(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = UserSerializer
     def perform_create(self, serializer):
         
         serializer.save()
-# VIEW AND UPDATE USERS
+        
+###################################################################################
+##### VIEW AND UPDATE USERS
 class RetrieveUpdateUserView(generics.RetrieveUpdateAPIView):
     serializer_class = UserSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_object(self):
         user = self.request.user
-
-        # Prefetch related data for the user
         user = get_user_model().objects.prefetch_related(
             Prefetch('bankaccount_set', queryset=BankAccount.objects.all()),
             Prefetch('contacts', queryset=Contact.objects.all()),
@@ -49,7 +50,8 @@ class RetrieveUpdateUserView(generics.RetrieveUpdateAPIView):
         return Response(serializer.data)
     
 
-# CREATE TOKEN
+###################################################################################
+########### CREATE TOKEN
 class CreateTokenView(APIView):
     def post(self, request, *args, **kwargs):
         email = request.data.get('email')
@@ -72,7 +74,8 @@ class CreateTokenView(APIView):
 
         return Response({"detail": "Verification code sent to your email."})
 
-# LOGOUT
+###################################################################################
+###### LOGOUT
 class LogoutView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -82,6 +85,8 @@ class LogoutView(APIView):
         token.blacklist()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+###################################################################################
+###### PASSWORD RESET
 class PasswordResetView(generics.CreateAPIView):
     serializer_class = PasswordResetSerializer
     permission_classes = [permissions.AllowAny]
@@ -93,6 +98,8 @@ class PasswordResetView(generics.CreateAPIView):
             return Response({'message': 'Password reset email sent.'}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+###################################################################################
+###### PASSWORD RESET CONFIRM
 class PasswordResetConfirmView(APIView):
     def post(self, request, *args, **kwargs):
         serializer = PasswordResetConfirmSerializer(data=request.data)
@@ -101,6 +108,8 @@ class PasswordResetConfirmView(APIView):
             return Response({'message': 'Password has been reset successfully.'}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+###################################################################################
+###### EMAIL CONFIRMATION
 class EmailConfirmationView(generics.GenericAPIView):
     serializer_class = EmailConfirmationSerializer
     permission_classes = [permissions.AllowAny]
@@ -109,7 +118,9 @@ class EmailConfirmationView(generics.GenericAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         return Response({"detail": "Email confirmed successfully."})
-
+    
+###################################################################################
+###### VERIFY LOGIN CODE
 class VerifyLoginCodeView(APIView):
     serializer_class = VerifyLoginCodeSerializer
     permission_classes = [permissions.AllowAny]
@@ -134,6 +145,8 @@ class VerifyLoginCodeView(APIView):
             'access': str(refresh.access_token),
         })
 
+###################################################################################
+###### CEDULA VERIFICATION
 class CedulaVerificationView(APIView):
     def post(self, request, *args, **kwargs):
         serializer = CedulaVerificationSerializer(data=request.data)
@@ -141,6 +154,8 @@ class CedulaVerificationView(APIView):
             return Response({"message": "Cedula is valid."}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+###################################################################################
+###### BANK ACCOUNTS
 class BankAccountViewSet(viewsets.ModelViewSet):
     queryset = BankAccount.objects.all()
     serializer_class = BankAccountSerializer
@@ -149,22 +164,8 @@ class BankAccountViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return BankAccount.objects.filter(user=self.request.user)
 
-class CreateBankAccountView(generics.CreateAPIView):
-    serializer_class = BankAccountSerializer
-    permission_classes = [permissions.IsAuthenticated]
-
-    def perform_create(self, serializer):
-        account_number = generate_unique_account_number()
-        bank_account = serializer.save(user=self.request.user, account_number=account_number)
-        self.send_account_creation_email(bank_account)
-
-    def send_account_creation_email(self, bank_account):
-        subject = 'Your New Bank Account'
-        message = f'Your new bank account has been created. Your account number is {bank_account.account_number}.'
-        send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [bank_account.user.email])
-
-
-
+###################################################################################
+###### TRANSFER MONEY
 class TransferMoneyView(APIView):
     serializer_class = TransferSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -178,38 +179,27 @@ class TransferMoneyView(APIView):
             user = request.user
 
             try:
-                # Obtén la cuenta del remitente
                 sender_account = BankAccount.objects.get(account_number=sender_account_number, user=user)
             except BankAccount.DoesNotExist:
                 return Response({"detail": "Sender account not found or unauthorized."}, status=status.HTTP_400_BAD_REQUEST)
 
             try:
-                # Obtén la cuenta del destinatario
                 receiver_account = BankAccount.objects.get(account_number=receiver_account_number)
             except BankAccount.DoesNotExist:
                 return Response({"detail": "Receiver account does not exist."}, status=status.HTTP_400_BAD_REQUEST)
 
             if sender_account.balance < amount:
                 return Response({"detail": "Insufficient funds."}, status=status.HTTP_400_BAD_REQUEST)
-
-            # Realiza la transferencia dentro de una transacción atómica
             with transaction.atomic():
                 sender_account.balance -= amount
                 receiver_account.balance += amount
 
                 sender_account.save()
                 receiver_account.save()
-
-                # Guarda el registro de la transferencia
                 serializer.save()
-
-                # Envía un correo al destinatario de la transferencia
                 self.send_transfer_notification(receiver_account.user.email, amount, sender_account_number)
-
                 return Response({'detail': 'Transfer initiated successfully.'}, status=status.HTTP_201_CREATED)
-        
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
     def send_transfer_notification(self, recipient_email, amount, sender_account_number):
         subject = 'Transfer Received'
         message = f'You have received a transfer of {amount} from account number {sender_account_number}.'
@@ -217,15 +207,14 @@ class TransferMoneyView(APIView):
         send_mail(subject, message, from_email, [recipient_email])
         
 
+###################################################################################
+###### CONFIRM TRANSFER
 class ConfirmTransferView(APIView):
     permission_classes = [permissions.IsAuthenticated]
-
     def post(self, request, *args, **kwargs):
         serializer = ConfirmTransferSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         transfer = serializer.save()
-
-        # Notify the receiver
         send_mail(
             'Transfer Received',
             f'You have received a transfer of {transfer.amount} from {transfer.sender.username}.',
@@ -235,6 +224,168 @@ class ConfirmTransferView(APIView):
 
         return Response({"detail": "Transfer confirmed successfully."}, status=status.HTTP_200_OK)
 
-
+###################################################################################
+###### TRANSFER VIEW
 class TransferView(generics.CreateAPIView):
     serializer_class = TransferSerializer
+
+###################################################################################
+###### VERIFY CEDULA AND SEND CODE
+from django.utils import timezone
+from datetime import timedelta
+import random
+
+class VerifyCedulaAndSendCodeView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        serializer = CedulaVerificationSerializer(data=request.data)
+        if serializer.is_valid():
+            cedula = serializer.validated_data.get('cedula')
+            user = User.objects.filter(cedula=cedula).first()
+            
+            if user:
+                verification_code = f'{random.randint(100000, 999999)}'
+                user.verification_code = verification_code
+                user.verification_code_expiry = timezone.now() + timedelta(minutes=10)
+                user.save()
+                html_message = f"""
+                <html>
+                    <head>
+                        <style>
+                            body {{
+                                font-family: Arial, sans-serif;
+                                background-color: #f4f4f4;
+                                color: #333;
+                                margin: 0;
+                                padding: 20px;
+                            }}
+                            .container {{
+                                max-width: 600px;
+                                margin: auto;
+                                background-color: #fff;
+                                padding: 20px;
+                                border-radius: 8px;
+                                box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+                            }}
+                            h1 {{
+                                color: #007BFF;
+                            }}
+                            p {{
+                                font-size: 16px;
+                            }}
+                            .footer {{
+                                margin-top: 20px;
+                                font-size: 14px;
+                                color: #777;
+                            }}
+                        </style>
+                    </head>
+                    <body>
+                        <div class="container">
+                            <h1>Código de Verificación</h1>
+                            <p>Hola,</p>
+                            <p>Para crear tu cuenta bancaria, utiliza el siguiente código de verificación:</p>
+                            <h2>{verification_code}</h2>
+                            <p>Este código es válido por 10 minutos. Si no has solicitado este cambio, puedes ignorar este correo.</p>
+                            <div class="footer">
+                                <p>Gracias,</p>
+                                <p>El equipo de Banco Politécnico</p>
+                            </div>
+                        </div>
+                    </body>
+                </html>
+                """
+                subject = 'Código de Verificación para Crear Cuenta Bancaria'
+                send_mail(subject, '', settings.DEFAULT_FROM_EMAIL, [user.email], html_message=html_message)
+                
+                return Response({'detail': 'Verification code sent to the user.'}, status=status.HTTP_200_OK)
+            else:
+                return Response({'detail': 'Cedula not found.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def verify_code_and_create_account(self, request, *args, **kwargs):
+        verification_code = request.data.get('verification_code')
+        user = User.objects.filter(verification_code=verification_code, verification_code_expiry__gte=timezone.now()).first()
+        
+        if user:
+            serializer = BankAccountSerializer(data={'user': user.id, 'balance': 100.00})
+            if serializer.is_valid():
+                bank_account = serializer.save()
+                subject = 'Cuenta Bancaria Creada'
+                message = f'Se ha creado tu cuenta bancaria con éxito. Tu número de cuenta es: {bank_account.account_number}.'
+                send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [user.email])
+                
+                user.verification_code = None
+                user.verification_code_expiry = None
+                user.save()
+                
+                return Response({'detail': 'Bank account created successfully.'}, status=status.HTTP_201_CREATED)
+            else:
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            return Response({'detail': 'Invalid or expired verification code.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+###################################################################################
+######  VERIFY CODE AND CREATE ACCOUNT
+class VerifyCodeAndCreateAccountView(APIView):
+    serializer_class = BankAccountSerializer
+
+    def post(self, request, *args, **kwargs):
+        serializer = self.serializer_class(data=request.data, context={'request': request})
+        if serializer.is_valid():
+            bank_account = serializer.save()
+            user_email = request.user.email
+            account_number = bank_account.account_number
+            html_message = f"""
+            <html>
+                <head>
+                    <style>
+                        body {{
+                            font-family: Arial, sans-serif;
+                            background-color: #f4f4f4;
+                            color: #333;
+                            margin: 0;
+                            padding: 20px;
+                        }}
+                        .container {{
+                            max-width: 600px;
+                            margin: auto;
+                            background-color: #fff;
+                            padding: 20px;
+                            border-radius: 8px;
+                            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+                        }}
+                        h1 {{
+                            color: #007BFF;
+                        }}
+                        p {{
+                            font-size: 16px;
+                        }}
+                        .footer {{
+                            margin-top: 20px;
+                            font-size: 14px;
+                            color: #777;
+                        }}
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <h1>¡Cuenta Bancaria Creada!</h1>
+                        <p>Hola,</p>
+                        <p>Tu cuenta bancaria ha sido creada con éxito.</p>
+                        <p><strong>Número de cuenta:</strong> {account_number}</p>
+                        <p>Gracias por elegir Banco Politécnico. Si tienes alguna pregunta, no dudes en ponerte en contacto con nosotros.</p>
+                        <div class="footer">
+                            <p>Atentamente,</p>
+                            <p>El equipo de Banco Politécnico</p>
+                        </div>
+                    </div>
+                </body>
+            </html>
+            """
+            subject = 'Tu Nueva Cuenta Bancaria en Banco Politécnico'
+            send_mail(subject, '', settings.DEFAULT_FROM_EMAIL, [user_email], html_message=html_message)
+            return Response({"detail": "Bank account created successfully and email sent."}, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

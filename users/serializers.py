@@ -11,6 +11,7 @@ from utils.some_util_file import validate_ecuadorian_cedula
 import logging
 from django.template.loader import render_to_string
 from django.utils.html import strip_tags
+from .signals import generate_unique_account_number
 
 logger = logging.getLogger(__name__)
 
@@ -126,23 +127,16 @@ class PasswordResetSerializer(serializers.Serializer):
             return None
 
     def save(self):
-        # Get the validated email
         email = self.validated_data['email']
         user = self.get_user_by_email(email)
-        
-        # Generate and set the reset password token
         user.reset_password_token = secrets.token_hex(16)
         user.reset_password_expires = timezone.now() + timedelta(hours=1)
         user.save()
-        
-        # Send the reset password email
         self.send_reset_email(user, email)
 
     def send_reset_email(self, user, email):
         reset_link = f'https://www.banco-politecnico.online/reset-password?token={user.reset_password_token}'
         subject = 'Restablecer tu contraseña'
-        
-        # Create HTML message
         html_message = f"""
         <html>
             <head>
@@ -195,10 +189,7 @@ class PasswordResetSerializer(serializers.Serializer):
             </body>
         </html>
         """
-        
-        # Create plain text message
         plain_message = strip_tags(html_message)
-        
         send_mail(
             subject,
             plain_message,
@@ -297,7 +288,6 @@ class TransferSerializer(serializers.ModelSerializer):
         sender_account_number = data.get('sender_account')
         receiver_account_number = data.get('receiver_account')
         
-        # Obtener el usuario autenticado
         user = self.context['request'].user
         
         try:
@@ -306,11 +296,9 @@ class TransferSerializer(serializers.ModelSerializer):
         except BankAccount.DoesNotExist:
             raise serializers.ValidationError("Sender or receiver account does not exist.")
 
-        # Verificar que el usuario autenticado es el propietario de la cuenta de origen
         if sender_account.user != user:
             raise serializers.ValidationError("You do not own the sender account.")
 
-        # Opcional: Verificar que la cuenta de destino pertenece a otro usuario
         if receiver_account.user == user:
             raise serializers.ValidationError("You cannot transfer money to your own account.")
         
@@ -343,46 +331,32 @@ class TransferSerializer(serializers.ModelSerializer):
     
 ######################################################################################################
 ### CONFIRM TRANSFER SERIALIZER ########
-
 class ConfirmTransferSerializer(serializers.Serializer):
     otp = serializers.CharField()
-
     def validate_otp(self, value):
         try:
             transfer = Transfer.objects.get(otp=value, otp_expiry__gt=timezone.now())
         except Transfer.DoesNotExist:
             raise serializers.ValidationError("Invalid or expired OTP.")
         return value
-
     def save(self):
         otp = self.validated_data['otp']
         transfer = Transfer.objects.get(otp=otp)
-
         if transfer.is_confirmed:
             raise serializers.ValidationError("Transfer already confirmed.")
-
         transfer.is_confirmed = True
         transfer.save()
-
-        # Obtener cuentas bancarias
         sender_account = BankAccount.objects.filter(user=transfer.sender).first()
         receiver_account = BankAccount.objects.filter(user=transfer.receiver).first()
-
         if not sender_account or not receiver_account:
             raise serializers.ValidationError("Sender or receiver account not found.")
-
-        # Cantidades antes y después de la transferencia
         amount_before_sender = sender_account.balance
         amount_after_sender = amount_before_sender - transfer.amount
         amount_after_receiver = receiver_account.balance + transfer.amount
-
-        # Actualizar el saldo de las cuentas
         sender_account.balance = amount_after_sender
         receiver_account.balance = amount_after_receiver
         sender_account.save()
         receiver_account.save()
-
-        # Crear registro de auditoría
         TransferAudit.objects.create(
             transfer=transfer,
             sender_account=sender_account,
@@ -392,5 +366,4 @@ class ConfirmTransferSerializer(serializers.Serializer):
             amount_after_sender=amount_after_sender,
             amount_after_receiver=amount_after_receiver
         )
-
         return transfer
