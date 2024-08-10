@@ -142,9 +142,11 @@ class Transfer(models.Model):
     is_confirmed = models.BooleanField(default=False)
     otp = models.CharField(max_length=6, blank=True, null=True)
     otp_expiry = models.DateTimeField(null=True, blank=True)
-
+    concept = models.CharField(max_length=255, blank=True, null=True)
+    document_number = models.CharField(max_length=50, blank=True, null=True)
+    
     def generate_otp(self):
-        self.otp = ''.join(random.choices(string.digits, k=6))  # Generar un código numérico de 6 dígitos
+        self.otp = ''.join(random.choices(string.digits, k=6))
         self.otp_expiry = timezone.now() + timedelta(minutes=10)
         self.save()
         return self.otp
@@ -161,7 +163,7 @@ class TransferAudit(models.Model):
     amount_before = models.DecimalField(max_digits=10, decimal_places=2)
     amount_after_sender = models.DecimalField(max_digits=10, decimal_places=2)
     amount_after_receiver = models.DecimalField(max_digits=10, decimal_places=2)
-    action = models.CharField(max_length=50)  # 'sent' or 'received'
+    action = models.CharField(max_length=50)
     timestamp = models.DateTimeField(auto_now_add=True)
     amount = models.DecimalField(max_digits=10, decimal_places=2)
 

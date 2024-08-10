@@ -247,18 +247,23 @@ class EmailConfirmationSerializer(serializers.Serializer):
 
 ######################################################################################################
 ### CEDULA VERIFICATION SERIALIZER ########
+from .models import User
 
 class CedulaVerificationSerializer(serializers.Serializer):
     cedula = serializers.CharField()
 
     def validate_cedula(self, value):
+        # Validación de formato de cédula ecuatoriana
         if not validate_ecuadorian_cedula(value):
-            raise serializers.ValidationError("Invalid Ecuadorian ID.")
+            raise serializers.ValidationError("Cédula ecuatoriana inválida.")
+        
+        # Validación de unicidad en la base de datos
+        if User.objects.filter(cedula=value).exists():
+            raise serializers.ValidationError("La cédula ya está registrada.")
+        
         return value
-
 ######################################################################################################
 ### VERIFY LOGIN CODE SERIALIZER ########
-
 class VerifyLoginCodeSerializer(serializers.Serializer):
     email = serializers.EmailField()
     code = serializers.CharField()
@@ -275,7 +280,6 @@ class VerifyLoginCodeSerializer(serializers.Serializer):
 
 ######################################################################################################
 ### TRANSFER SERIALIZER ########
-
 class TransferSerializer(serializers.ModelSerializer):
     sender_account = serializers.CharField(write_only=True)
     receiver_account = serializers.CharField(write_only=True)
@@ -320,11 +324,71 @@ class TransferSerializer(serializers.ModelSerializer):
         otp = transfer.generate_otp()
 
         # Enviar el código al correo del usuario
+        html_message = f"""
+        <html>
+            <head>
+                <style>
+                    body {{
+                        font-family: 'Arial', sans-serif;
+                        background-color: #f4f4f4;
+                        color: #333;
+                        margin: 0;
+                        padding: 20px;
+                    }}
+                    .container {{
+                        max-width: 600px;
+                        margin: auto;
+                        background-color: #ffffff;
+                        padding: 20px;
+                        border-radius: 8px;
+                        box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+                    }}
+                    h1 {{
+                        color: #007BFF;
+                        font-size: 24px;
+                    }}
+                    p {{
+                        font-size: 16px;
+                        line-height: 1.5;
+                    }}
+                    .code {{
+                        background-color: #f9f9f9;
+                        border: 1px solid #ddd;
+                        border-radius: 5px;
+                        padding: 10px;
+                        font-size: 20px;
+                        font-weight: bold;
+                        text-align: center;
+                    }}
+                    .footer {{
+                        margin-top: 20px;
+                        font-size: 14px;
+                        color: #777;
+                    }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>Código de Confirmación de Transferencia</h1>
+                    <p>Hola,</p>
+                    <p>Para confirmar tu transferencia de dinero, utiliza el siguiente código:</p>
+                    <div class="code">{otp}</div>
+                    <p>Este código es válido por 10 minutos. Si no solicitaste esta transferencia, por favor ignora este correo.</p>
+                    <div class="footer">
+                        <p>Gracias,</p>
+                        <p>El equipo de Banco Politécnico</p>
+                    </div>
+                </div>
+            </body>
+        </html>
+        """
+
         send_mail(
             'Código de Confirmación para Transferencia de Dinero',
-            f'Tu código de confirmación para la transferencia de dinero es {otp}',
+            '',
             'no-reply@example.com',
-            [transfer.sender.email]
+            [transfer.sender.email],
+            html_message=html_message
         )
 
         return transfer
@@ -333,12 +397,14 @@ class TransferSerializer(serializers.ModelSerializer):
 ### CONFIRM TRANSFER SERIALIZER ########
 class ConfirmTransferSerializer(serializers.Serializer):
     otp = serializers.CharField()
+
     def validate_otp(self, value):
         try:
             transfer = Transfer.objects.get(otp=value, otp_expiry__gt=timezone.now())
         except Transfer.DoesNotExist:
             raise serializers.ValidationError("Invalid or expired OTP.")
         return value
+
     def save(self):
         otp = self.validated_data['otp']
         transfer = Transfer.objects.get(otp=otp)
@@ -346,24 +412,37 @@ class ConfirmTransferSerializer(serializers.Serializer):
             raise serializers.ValidationError("Transfer already confirmed.")
         transfer.is_confirmed = True
         transfer.save()
-        sender_account = BankAccount.objects.filter(user=transfer.sender).first()
-        receiver_account = BankAccount.objects.filter(user=transfer.receiver).first()
-        if not sender_account or not receiver_account:
+
+        # Usar filter() para manejar múltiples objetos
+        sender_accounts = BankAccount.objects.filter(user=transfer.sender)
+        receiver_accounts = BankAccount.objects.filter(user=transfer.receiver)
+
+        if not sender_accounts.exists() or not receiver_accounts.exists():
             raise serializers.ValidationError("Sender or receiver account not found.")
+        
+        sender_account = sender_accounts.first()
+        receiver_account = receiver_accounts.first()
+
         amount_before_sender = sender_account.balance
         amount_after_sender = amount_before_sender - transfer.amount
         amount_after_receiver = receiver_account.balance + transfer.amount
+
         sender_account.balance = amount_after_sender
         receiver_account.balance = amount_after_receiver
         sender_account.save()
         receiver_account.save()
+
         TransferAudit.objects.create(
             transfer=transfer,
-            sender_account=sender_account,
-            receiver_account=receiver_account,
-            amount=transfer.amount,
-            amount_before_sender=amount_before_sender,
+            sender_account_number=sender_account.account_number,
+            receiver_account_number=receiver_account.account_number,
+            sender_username=transfer.sender.username,
+            receiver_username=transfer.receiver.username,
+            amount_before=amount_before_sender,
             amount_after_sender=amount_after_sender,
-            amount_after_receiver=amount_after_receiver
+            amount_after_receiver=amount_after_receiver,
+            action='sent',
+            amount=transfer.amount
         )
+
         return transfer
