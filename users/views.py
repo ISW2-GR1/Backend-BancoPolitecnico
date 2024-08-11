@@ -12,7 +12,7 @@ from django.db.models import Prefetch
 from users.serializers import (
     UserSerializer, AuthTokenSerializer, BankAccountSerializer,
     TransferSerializer, PasswordResetSerializer, PasswordResetConfirmSerializer,
-    EmailConfirmationSerializer, CedulaVerificationSerializer, VerifyLoginCodeSerializer, ConfirmTransferSerializer
+    EmailConfirmationSerializer, CedulaVerificationSerializer, VerifyLoginCodeSerializer, ConfirmTransferSerializer, CedulaVerificationSerializerAccount
 )
 from .models import BankAccount, Transfer,Contact
 from .signals import generate_unique_account_number
@@ -393,16 +393,18 @@ class VerifyCedulaAndSendCodeView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
-        serializer = CedulaVerificationSerializer(data=request.data)
+        serializer = CedulaVerificationSerializerAccount(data=request.data)
         if serializer.is_valid():
             cedula = serializer.validated_data.get('cedula')
-            user = User.objects.filter(cedula=cedula).first()
-            
-            if user:
+            user = request.user
+
+            # Verificar si la cédula pertenece al usuario autenticado
+            if user.cedula == cedula:
                 verification_code = f'{random.randint(100000, 999999)}'
                 user.verification_code = verification_code
                 user.verification_code_expiry = timezone.now() + timedelta(minutes=10)
                 user.save()
+                
                 html_message = f"""
                 <html>
                     <head>
@@ -453,9 +455,9 @@ class VerifyCedulaAndSendCodeView(APIView):
                 subject = 'Código de Verificación para Crear Cuenta Bancaria'
                 send_mail(subject, '', settings.DEFAULT_FROM_EMAIL, [user.email], html_message=html_message)
                 
-                return Response({'detail': 'Verification code sent to the user.'}, status=status.HTTP_200_OK)
+                return Response({'detail': 'Código de verificación enviado al usuario.'}, status=status.HTTP_200_OK)
             else:
-                return Response({'detail': 'Cedula not found.'}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({'detail': 'La cédula no pertenece al usuario autenticado.'}, status=status.HTTP_400_BAD_REQUEST)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -475,18 +477,21 @@ class VerifyCedulaAndSendCodeView(APIView):
                 user.verification_code_expiry = None
                 user.save()
                 
-                return Response({'detail': 'Bank account created successfully.'}, status=status.HTTP_201_CREATED)
+                return Response({'detail': 'Cuenta bancaria creada con éxito.'}, status=status.HTTP_201_CREATED)
             else:
                 return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         else:
-            return Response({'detail': 'Invalid or expired verification code.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': 'Código de verificación inválido o expirado.'}, status=status.HTTP_400_BAD_REQUEST)
         
 ###################################################################################
 ######  VERIFY CODE AND CREATE ACCOUNT
 class VerifyCodeAndCreateAccountView(APIView):
     def post(self, request, *args, **kwargs):
         verification_code = request.data.get('verification_code')
-        user = User.objects.filter(verification_code=verification_code, verification_code_expiry__gte=timezone.now()).first()
+        user = User.objects.filter(
+            verification_code=verification_code,
+            verification_code_expiry__gte=timezone.now()
+        ).first()
         
         if user:
             # Pasar el contexto del request al serializador
@@ -549,7 +554,341 @@ class VerifyCodeAndCreateAccountView(APIView):
                 user.verification_code_expiry = None
                 user.save()
                 
-                return Response({"detail": "Bank account created successfully and email sent."}, status=status.HTTP_201_CREATED)
+                return Response({"detail": "Cuenta bancaria creada con éxito y correo enviado."}, status=status.HTTP_201_CREATED)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
-        return Response({'detail': 'Invalid or expired verification code.'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'detail': 'Código de verificación inválido o expirado.'}, status=status.HTTP_400_BAD_REQUEST)
+    
+############################################################################################################
+###### BANK ACCOUNT LIST VIEW
+class UserBankAccountsListView(generics.ListAPIView):
+    serializer_class = BankAccountSerializer
+    permission_classes = [IsAuthenticated]
+    def get_queryset(self):
+        user = self.request.user
+        return BankAccount.objects.filter(user=user)
+    
+############################################################################################################
+###### BANK ACCOUNT SEARCH VIEW
+from rest_framework.request import Request
+
+class BankAccountSearchView(generics.ListAPIView):
+    serializer_class = BankAccountSerializer
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request, *args, **kwargs):
+        # Extraer los parámetros del cuerpo de la solicitud
+        account_number = request.data.get('account_number', None)
+        cedula = request.data.get('cedula', None)
+
+        queryset = BankAccount.objects.all()
+
+        if account_number:
+            queryset = queryset.filter(account_number=account_number)
+
+        if cedula:
+            try:
+                user = User.objects.get(cedula=cedula)
+                queryset = queryset.filter(user=user)
+            except User.DoesNotExist:
+                # Si no se encuentra el usuario, se retorna un error
+                return Response(
+                    {'error': 'No se encontró un usuario con la cédula proporcionada.'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+        if not queryset.exists():
+            # Si el queryset está vacío, se retorna un error
+            return Response(
+                {'error': 'No se encontró ninguna cuenta bancaria con los criterios proporcionados.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    
+############################################################################################################
+######  REQUEST ACCOUNT DEACTIVATION
+from rest_framework import status, views
+from django.core.mail import EmailMessage
+from .models import User
+class RequestAccountDeactivationView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        user = request.user
+
+        # Verifica que el usuario esté autenticado
+        if not user.is_authenticated:
+            return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        # Verificar el número de cuenta proporcionado
+        account_number = request.data.get('account_number')
+        account = BankAccount.objects.filter(user=user, account_number=account_number).first()
+        if not account:
+            return Response({'error': 'Invalid account number'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Verificar si la cuenta es la principal
+        if account.is_primary:
+            return Response({'error': 'Cannot deactivate the primary account'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Generar el código de verificación
+        verification_code = user.generate_verification_code()
+
+        subject = 'Código de Verificación para Desactivar tu Cuenta'
+        message = f"""
+        <html>
+        <head>
+            <style>
+                body {{
+                    font-family: Arial, sans-serif;
+                    background-color: #f4f4f4;
+                    color: #333;
+                    margin: 0;
+                    padding: 20px;
+                }}
+                .container {{
+                    max-width: 600px;
+                    margin: auto;
+                    background-color: #fff;
+                    padding: 20px;
+                    border-radius: 8px;
+                    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+                }}
+                h1 {{
+                    color: #007BFF;
+                }}
+                p {{
+                    font-size: 16px;
+                }}
+                a {{
+                    color: #007BFF;
+                    text-decoration: none;
+                    font-weight: bold;
+                }}
+                .footer {{
+                    margin-top: 20px;
+                    font-size: 14px;
+                    color: #777;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Código de Verificación para Desactivar tu Cuenta</h1>
+                <p>Hola,</p>
+                <p>Para desactivar tu cuenta, por favor utiliza el siguiente código de verificación:</p>
+                <p><strong>{verification_code}</strong></p>
+                <p>Este código expirará en 10 minutos.</p>
+                <div class="footer">
+                    <p>Gracias,</p>
+                    <p>El equipo de Banco Politécnico</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        from_email = 'info.iso50001@inn-energy.net'
+        email = EmailMessage(subject, message, from_email, [user.email])
+        email.content_subtype = 'html'
+        email.send()
+
+        return Response({'message': 'Verification code sent'}, status=status.HTTP_200_OK)
+
+############################################################################################################
+######  CONFIRM ACCOUNT DEACTIVATION
+from .serializers import DeactivateAccountRequestSerializer
+class ConfirmAccountDeactivationView(views.APIView):
+    permission_classes = [IsAuthenticated]  # Requiere autenticación
+
+    def post(self, request, *args, **kwargs):
+        serializer = DeactivateAccountRequestSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+
+        # Si el serializer es válido, significa que el código de verificación y el número de cuenta son correctos
+        user = request.user
+        account_number = serializer.validated_data.get('account_number')
+        account = BankAccount.objects.filter(user=user, account_number=account_number).first()
+
+        if not account:
+            return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if account.is_primary:
+            return Response({'error': 'Cannot deactivate the primary account'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Transferir saldo a la cuenta principal
+        primary_account = BankAccount.objects.filter(user=user, is_primary=True).first()
+        if primary_account:
+            primary_account.balance += account.balance
+            primary_account.save()
+
+        # Desactivar la cuenta
+        account.is_active = False
+        account.save()
+
+        return Response({"detail": "Your account has been deactivated."}, status=status.HTTP_200_OK)
+
+
+
+############################################################################################################
+### TRANSFER SUMMARY
+from datetime import datetime
+
+class TransferSummaryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        user = request.user
+
+        # Obtener las cuentas del usuario autenticado
+        user_accounts = BankAccount.objects.filter(user=user)
+        user_account_numbers = user_accounts.values_list('account_number', flat=True)
+
+        # Obtener las fechas de los parámetros de la solicitud
+        start_date_str = request.query_params.get('startDate')
+        end_date_str = request.query_params.get('endDate')
+
+        # Convertir las fechas de string a objetos datetime
+        start_date = datetime.strptime(start_date_str, '%Y-%m-%d') if start_date_str else None
+        end_date = datetime.strptime(end_date_str, '%Y-%m-%d') if end_date_str else None
+
+        # Obtener transferencias enviadas y recibidas
+        sent_transfers = Transfer.objects.filter(sender=user, sender__bankaccount__account_number__in=user_account_numbers)
+        received_transfers = Transfer.objects.filter(receiver=user, receiver__bankaccount__account_number__in=user_account_numbers)
+
+        # Aplicar filtros de fecha si están presentes
+        if start_date:
+            sent_transfers = sent_transfers.filter(timestamp__gte=start_date)
+            received_transfers = received_transfers.filter(timestamp__gte=start_date)
+
+        if end_date:
+            sent_transfers = sent_transfers.filter(timestamp__lte=end_date)
+            received_transfers = received_transfers.filter(timestamp__lte=end_date)
+
+        # Mapear números de cuenta a las transferencias
+        def map_transfer_data(transfers, transfer_type):
+            transfer_list = []
+            seen_transfers = set()
+
+            for transfer in transfers:
+                sender_account = transfer.sender.bankaccount_set.first()
+                receiver_account = transfer.receiver.bankaccount_set.first()
+
+                transfer_data = {
+                    'amount': transfer.amount,
+                    'timestamp': transfer.timestamp,
+                    'receiver': transfer.receiver.username if transfer_type == 'sent' else transfer.sender.username,
+                    'sender': transfer.sender.username if transfer_type == 'received' else None,
+                    'receiver_account_number': receiver_account.account_number if receiver_account else None,
+                    'sender_account_number': sender_account.account_number if sender_account else None,
+                    'concept': transfer.concept,
+                    'type': transfer_type
+                }
+
+                transfer_id = (transfer_data['timestamp'], transfer_data['amount'], transfer_data['receiver'], transfer_data['sender'])
+                if transfer_id not in seen_transfers:
+                    seen_transfers.add(transfer_id)
+                    transfer_list.append(transfer_data)
+
+            return transfer_list
+
+        sent_data = map_transfer_data(sent_transfers, 'sent')
+        received_data = map_transfer_data(received_transfers, 'received')
+
+        # Unir y ordenar las transferencias por fecha
+        all_transfers = sorted(sent_data + received_data, key=lambda x: x['timestamp'], reverse=True)
+
+        return Response(all_transfers, status=status.HTTP_200_OK)
+    
+    
+from .serializers import ContactSerializer
+
+class AddContactView(APIView):
+    def post(self, request, *args, **kwargs):
+        contact_id = request.data.get('contact')
+        contact_account_number = request.data.get('contact_account_number')
+        
+        if not contact_id or not contact_account_number:
+            return Response({"error": "Both contact ID and account number are required."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            contact_user = User.objects.get(id=contact_id)
+        except User.DoesNotExist:
+            return Response({"error": "User with the given ID does not exist."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        contact, created = Contact.objects.get_or_create(
+            owner=request.user,
+            contact=contact_user,
+            contact_account_number=contact_account_number
+        )
+
+        if created:
+            return Response(ContactSerializer(contact).data, status=status.HTTP_201_CREATED)
+        else:
+            return Response({"error": "Contact already exists."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+class DeactivateContactView(APIView):
+    def delete(self, request, contact_id, *args, **kwargs):
+        try:
+            contact = Contact.objects.get(id=contact_id, owner=request.user)
+            contact.is_active = False
+            contact.save()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except Contact.DoesNotExist:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+
+class ContactListView(generics.ListAPIView):
+    serializer_class = ContactSerializer
+
+    def get_queryset(self):
+        return Contact.objects.filter(owner=self.request.user, is_active=True)
+    
+    
+
+from .serializers import UpdateUsernameSerializer
+
+class UpdateUsernameView(generics.UpdateAPIView):
+    queryset = User.objects.all()
+    serializer_class = UpdateUsernameSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_object(self):
+        # Obtiene el usuario actual desde el request
+        return self.request.user
+
+    def update(self, request, *args, **kwargs):
+        # Llama al método update del serializador
+        return super().update(request, *args, **kwargs)
+
+
+from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from django.contrib.auth import update_session_auth_hash
+from .serializers import UpdatePasswordSerializer
+
+class UpdatePasswordView(APIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = UpdatePasswordSerializer
+
+    def post(self, request, *args, **kwargs):
+        serializer = self.serializer_class(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+
+        user = request.user
+        new_password = serializer.validated_data['new_password']
+
+        # Actualiza la contraseña del usuario
+        user.set_password(new_password)
+        user.save()
+
+        # Actualiza la sesión del usuario
+        update_session_auth_hash(request, user)
+
+        return Response({'status': 'password updated'}, status=status.HTTP_200_OK)

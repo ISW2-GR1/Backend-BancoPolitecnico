@@ -15,13 +15,19 @@ from .signals import generate_unique_account_number
 
 logger = logging.getLogger(__name__)
 
+class UserSerializerAccount(serializers.ModelSerializer):
+    class Meta:
+        model = get_user_model()
+        fields = ['name', 'last_name', 'email', 'cedula'] 
+        
 ######################################################################################################
 ### BANK ACCOUNT SERIALIZER ########
-
 class BankAccountSerializer(serializers.ModelSerializer):
+    user_details = UserSerializerAccount(source='user', read_only=True)
+
     class Meta:
         model = BankAccount
-        fields = ['id', 'user', 'account_number', 'balance', 'is_active']
+        fields = ['id', 'user_details', 'account_number', 'balance', 'is_active', 'is_primary']
         read_only_fields = ['account_number', 'balance', 'user']
 
     def create(self, validated_data):
@@ -84,9 +90,14 @@ class UserSerializer(serializers.ModelSerializer):
 ### CONTACT SERIALIZER ########
 
 class ContactSerializer(serializers.ModelSerializer):
+    contact_name = serializers.SerializerMethodField()
+
     class Meta:
         model = Contact
-        fields = ['id', 'owner', 'contact', 'contact_account_number']
+        fields = ['id', 'owner', 'contact', 'contact_account_number', 'contact_name']
+
+    def get_contact_name(self, obj):
+        return obj.contact.name 
 
 ######################################################################################################
 ### AUTH TOKEN SERIALIZER ########
@@ -262,6 +273,15 @@ class CedulaVerificationSerializer(serializers.Serializer):
             raise serializers.ValidationError("La cédula ya está registrada.")
         
         return value
+
+class CedulaVerificationSerializerAccount(serializers.Serializer):
+    cedula = serializers.CharField()
+
+    def validate_cedula(self, value):
+        if not validate_ecuadorian_cedula(value):
+            raise serializers.ValidationError("Invalid Ecuadorian ID.")
+        return value
+
 ######################################################################################################
 ### VERIFY LOGIN CODE SERIALIZER ########
 class VerifyLoginCodeSerializer(serializers.Serializer):
@@ -283,6 +303,7 @@ class VerifyLoginCodeSerializer(serializers.Serializer):
 class TransferSerializer(serializers.ModelSerializer):
     sender_account = serializers.CharField(write_only=True)
     receiver_account = serializers.CharField(write_only=True)
+    amount = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=0, write_only=True)
 
     class Meta:
         model = Transfer
@@ -291,39 +312,53 @@ class TransferSerializer(serializers.ModelSerializer):
     def validate(self, data):
         sender_account_number = data.get('sender_account')
         receiver_account_number = data.get('receiver_account')
+        amount = data.get('amount')
         
         user = self.context['request'].user
         
+        # Validar que la cantidad sea mayor a cero
+        if amount <= 0:
+            raise serializers.ValidationError("La cantidad debe ser mayor a cero.")
+
         try:
             sender_account = BankAccount.objects.get(account_number=sender_account_number)
             receiver_account = BankAccount.objects.get(account_number=receiver_account_number)
         except BankAccount.DoesNotExist:
-            raise serializers.ValidationError("Sender or receiver account does not exist.")
+            raise serializers.ValidationError("La cuenta de origen o la cuenta de destino no existen.")
 
+        # Validar que el usuario es el propietario de la cuenta de origen
         if sender_account.user != user:
-            raise serializers.ValidationError("You do not own the sender account.")
-
-        if receiver_account.user == user:
-            raise serializers.ValidationError("You cannot transfer money to your own account.")
+            raise serializers.ValidationError("No eres el propietario de la cuenta de origen.")
         
+        # Validar que la cuenta de destino no es la misma que la cuenta de origen
+        if sender_account == receiver_account:
+            raise serializers.ValidationError("No puedes transferir dinero a la misma cuenta.")
+
+        # Validar que el saldo sea suficiente
+        if sender_account.balance < amount:
+            raise serializers.ValidationError("Saldo insuficiente en la cuenta de origen.")
+
         return data
 
     def create(self, validated_data):
         sender_account_number = validated_data.pop('sender_account')
         receiver_account_number = validated_data.pop('receiver_account')
+        amount = validated_data['amount']
 
         sender_account = BankAccount.objects.get(account_number=sender_account_number)
         receiver_account = BankAccount.objects.get(account_number=receiver_account_number)
 
+        # Crear la transferencia
         transfer = Transfer.objects.create(
             sender=sender_account.user,
             receiver=receiver_account.user,
-            amount=validated_data['amount'],
+            amount=amount,
             is_confirmed=False
         )
+
         otp = transfer.generate_otp()
 
-        # Enviar el código al correo del usuario
+        # Enviar el OTP por correo electrónico
         html_message = f"""
         <html>
             <head>
@@ -391,8 +426,16 @@ class TransferSerializer(serializers.ModelSerializer):
             html_message=html_message
         )
 
-        return transfer
-    
+        # Retornar información detallada sobre la transferencia
+        return {
+            'id': transfer.id,
+            'sender_account': sender_account_number,
+            'receiver_account': receiver_account_number,
+            'amount': amount,
+            'status': 'pending',
+            'message': 'Transferencia creada exitosamente, por favor verifica tu correo para confirmar.'
+        }
+
 ######################################################################################################
 ### CONFIRM TRANSFER SERIALIZER ########
 class ConfirmTransferSerializer(serializers.Serializer):
@@ -446,3 +489,69 @@ class ConfirmTransferSerializer(serializers.Serializer):
         )
 
         return transfer
+    
+
+class DeactivateAccountRequestSerializer(serializers.Serializer):
+    verification_code = serializers.CharField()
+    account_number = serializers.CharField()
+
+    def validate(self, data):
+        user = self.context['request'].user
+        verification_code = data['verification_code']
+        account_number = data['account_number']
+
+        # Verificar el código de verificación
+        if user.verification_code != verification_code or timezone.now() > user.verification_code_expiry:
+            raise serializers.ValidationError("Invalid or expired verification code.")
+        
+        # Verificar si el número de cuenta pertenece al usuario
+        if not BankAccount.objects.filter(user=user, account_number=account_number).exists():
+            raise serializers.ValidationError("Account number does not belong to this user.")
+        
+        return data
+    
+class TransferSummarySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Transfer
+        fields = ['amount', 'timestamp', 'receiver', 'sender', 'concept', 'sender_account_number', 'receiver_account_number']
+        
+
+
+class UpdateUsernameSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['username']
+
+    def validate_username(self, value):
+        if User.objects.filter(username=value).exists():
+            raise serializers.ValidationError("El nombre de usuario ya está en uso.")
+        return value
+    
+from rest_framework import serializers
+import re
+
+class UpdatePasswordSerializer(serializers.Serializer):
+    new_password = serializers.CharField(required=True)
+
+    def validate_new_password(self, value):
+        # Validar longitud mínima
+        if len(value) < 8:
+            raise serializers.ValidationError("La contraseña debe tener al menos 8 caracteres.")
+        
+        # Validar que contenga al menos una letra mayúscula
+        if not re.search(r'[A-Z]', value):
+            raise serializers.ValidationError("La contraseña debe contener al menos una letra mayúscula.")
+        
+        # Validar que contenga al menos una letra minúscula
+        if not re.search(r'[a-z]', value):
+            raise serializers.ValidationError("La contraseña debe contener al menos una letra minúscula.")
+        
+        # Validar que contenga al menos un dígito
+        if not re.search(r'[0-9]', value):
+            raise serializers.ValidationError("La contraseña debe contener al menos un dígito.")
+        
+        # Validar que contenga al menos un carácter especial
+        if not re.search(r'[!@#$%^&*(),.?":{}|<>]', value):
+            raise serializers.ValidationError("La contraseña debe contener al menos un carácter especial.")
+        
+        return value

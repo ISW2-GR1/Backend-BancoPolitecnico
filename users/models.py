@@ -125,6 +125,7 @@ class BankAccount(models.Model):
     account_number = models.CharField(max_length=20, unique=True)
     balance = models.DecimalField(max_digits=10, decimal_places=2, default=0.0)
     is_active = models.BooleanField(default=True)
+    is_primary = models.BooleanField(default=False)
 
     def __str__(self):
         return f'{self.user.username} - {self.account_number}'
@@ -133,6 +134,11 @@ class Contact(models.Model):
     owner = models.ForeignKey(User, related_name='contacts', on_delete=models.CASCADE)
     contact = models.ForeignKey(User, on_delete=models.CASCADE)
     contact_account_number = models.CharField(max_length=20)
+    is_active = models.BooleanField(default=True)  # Nuevo campo
+
+    def __str__(self):
+        return f'{self.owner.username} - {self.contact.username}'
+
 
 class Transfer(models.Model):
     sender = models.ForeignKey(User, related_name='sent_transfers', on_delete=models.CASCADE)
@@ -145,6 +151,9 @@ class Transfer(models.Model):
     concept = models.CharField(max_length=255, blank=True, null=True)
     document_number = models.CharField(max_length=50, blank=True, null=True)
     
+    sender_account_number = models.CharField(max_length=20, blank=True, null=True)
+    receiver_account_number = models.CharField(max_length=20, blank=True, null=True)
+
     def generate_otp(self):
         self.otp = ''.join(random.choices(string.digits, k=6))
         self.otp_expiry = timezone.now() + timedelta(minutes=10)
