@@ -504,11 +504,19 @@ class UpdateUsernameSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("El nombre de usuario ya está en uso.")
         return value
     
+
 from rest_framework import serializers
 import re
 
 class UpdatePasswordSerializer(serializers.Serializer):
+    old_password = serializers.CharField(required=True)
     new_password = serializers.CharField(required=True)
+
+    def validate_old_password(self, value):
+        request = self.context.get('request')
+        if not request.user.check_password(value):
+            raise serializers.ValidationError("La contraseña antigua es incorrecta.")
+        return value
 
     def validate_new_password(self, value):
         # Validar longitud mínima

@@ -989,7 +989,12 @@ class UpdatePasswordView(APIView):
         serializer.is_valid(raise_exception=True)
 
         user = request.user
+        old_password = serializer.validated_data['old_password']
         new_password = serializer.validated_data['new_password']
+
+        # Verificar la contraseña antigua
+        if not user.check_password(old_password):
+            return Response({'error': 'La contraseña antigua es incorrecta.'}, status=status.HTTP_400_BAD_REQUEST)
 
         # Actualiza la contraseña del usuario
         user.set_password(new_password)
@@ -998,4 +1003,4 @@ class UpdatePasswordView(APIView):
         # Actualiza la sesión del usuario
         update_session_auth_hash(request, user)
 
-        return Response({'status': 'password updated'}, status=status.HTTP_200_OK)
+        return Response({'status': 'Contraseña actualizada'}, status=status.HTTP_200_OK)
