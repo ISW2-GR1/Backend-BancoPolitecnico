@@ -170,15 +170,27 @@ class CreateTokenView(APIView):
         })
 ###################################################################################
 ###### LOGOUT
+from rest_framework_simplejwt.exceptions import InvalidToken
+
 class LogoutView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
         refresh_token = request.data.get("refresh")
-        token = RefreshToken(refresh_token)
-        token.blacklist()
-        return Response(status=status.HTTP_204_NO_CONTENT)
 
+        if not refresh_token:
+            return Response({'detalle': 'No se proporcionó el token de actualización.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            token = RefreshToken(refresh_token)
+            # Blacklist the token
+            token.blacklist()
+            return Response({'detalle': 'Sesión cerrada correctamente.'}, status=status.HTTP_200_OK)
+        except InvalidToken:
+            return Response({'detalle': 'Token inválido.'}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({'detalle': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    
 ###################################################################################
 ###### PASSWORD RESET
 class PasswordResetView(generics.CreateAPIView):
