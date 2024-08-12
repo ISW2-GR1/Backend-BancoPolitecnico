@@ -989,8 +989,8 @@ class UpdatePasswordView(APIView):
         serializer.is_valid(raise_exception=True)
 
         user = request.user
-        old_password = serializer.validated_data['old_password']
-        new_password = serializer.validated_data['new_password']
+        old_password = serializer.validated_data.get('old_password')
+        new_password = serializer.validated_data.get('new_password')
 
         # Verificar la contraseña antigua
         if not user.check_password(old_password):
@@ -1002,5 +1002,62 @@ class UpdatePasswordView(APIView):
 
         # Actualiza la sesión del usuario
         update_session_auth_hash(request, user)
+
+        # Enviar correo electrónico
+        subject = 'Confirmación de Actualización de Contraseña'
+        message = f"""
+        <html>
+        <head>
+            <style>
+                body {{
+                    font-family: Arial, sans-serif;
+                    background-color: #f4f4f4;
+                    color: #333;
+                    margin: 0;
+                    padding: 20px;
+                }}
+                .container {{
+                    max-width: 600px;
+                    margin: auto;
+                    background-color: #fff;
+                    padding: 20px;
+                    border-radius: 8px;
+                    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+                }}
+                h1 {{
+                    color: #007BFF;
+                }}
+                p {{
+                    font-size: 16px;
+                }}
+                a {{
+                    color: #007BFF;
+                    text-decoration: none;
+                    font-weight: bold;
+                }}
+                .footer {{
+                    margin-top: 20px;
+                    font-size: 14px;
+                    color: #777;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Confirmación de Actualización de Contraseña</h1>
+                <p>Hola {user.username},</p>
+                <p>Tu contraseña ha sido actualizada correctamente.</p>
+                <div class="footer">
+                    <p>Gracias,</p>
+                    <p>El equipo de Banco Politécnico</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        from_email = 'info.iso50001@inn-energy.net'
+        email = EmailMessage(subject, message, from_email, [user.email])
+        email.content_subtype = 'html'
+        email.send()
 
         return Response({'status': 'Contraseña actualizada'}, status=status.HTTP_200_OK)
