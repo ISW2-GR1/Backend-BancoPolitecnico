@@ -303,7 +303,6 @@ class VerifyLoginCodeSerializer(serializers.Serializer):
 class TransferSerializer(serializers.ModelSerializer):
     sender_account = serializers.CharField(write_only=True)
     receiver_account = serializers.CharField(write_only=True)
-    amount = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=0, write_only=True)
 
     class Meta:
         model = Transfer
@@ -312,53 +311,39 @@ class TransferSerializer(serializers.ModelSerializer):
     def validate(self, data):
         sender_account_number = data.get('sender_account')
         receiver_account_number = data.get('receiver_account')
-        amount = data.get('amount')
         
         user = self.context['request'].user
         
-        # Validar que la cantidad sea mayor a cero
-        if amount <= 0:
-            raise serializers.ValidationError("La cantidad debe ser mayor a cero.")
-
         try:
             sender_account = BankAccount.objects.get(account_number=sender_account_number)
             receiver_account = BankAccount.objects.get(account_number=receiver_account_number)
         except BankAccount.DoesNotExist:
-            raise serializers.ValidationError("La cuenta de origen o la cuenta de destino no existen.")
+            raise serializers.ValidationError("Sender or receiver account does not exist.")
 
-        # Validar que el usuario es el propietario de la cuenta de origen
         if sender_account.user != user:
-            raise serializers.ValidationError("No eres el propietario de la cuenta de origen.")
+            raise serializers.ValidationError("You do not own the sender account.")
+
+        if receiver_account.user == user:
+            raise serializers.ValidationError("You cannot transfer money to your own account.")
         
-        # Validar que la cuenta de destino no es la misma que la cuenta de origen
-        if sender_account == receiver_account:
-            raise serializers.ValidationError("No puedes transferir dinero a la misma cuenta.")
-
-        # Validar que el saldo sea suficiente
-        if sender_account.balance < amount:
-            raise serializers.ValidationError("Saldo insuficiente en la cuenta de origen.")
-
         return data
 
     def create(self, validated_data):
         sender_account_number = validated_data.pop('sender_account')
         receiver_account_number = validated_data.pop('receiver_account')
-        amount = validated_data['amount']
 
         sender_account = BankAccount.objects.get(account_number=sender_account_number)
         receiver_account = BankAccount.objects.get(account_number=receiver_account_number)
 
-        # Crear la transferencia
         transfer = Transfer.objects.create(
             sender=sender_account.user,
             receiver=receiver_account.user,
-            amount=amount,
+            amount=validated_data['amount'],
             is_confirmed=False
         )
-
         otp = transfer.generate_otp()
 
-        # Enviar el OTP por correo electrónico
+        # Enviar el código al correo del usuario
         html_message = f"""
         <html>
             <head>
@@ -426,16 +411,8 @@ class TransferSerializer(serializers.ModelSerializer):
             html_message=html_message
         )
 
-        # Retornar información detallada sobre la transferencia
-        return {
-            'id': transfer.id,
-            'sender_account': sender_account_number,
-            'receiver_account': receiver_account_number,
-            'amount': amount,
-            'status': 'pending',
-            'message': 'Transferencia creada exitosamente, por favor verifica tu correo para confirmar.'
-        }
-
+        return transfer
+    
 ######################################################################################################
 ### CONFIRM TRANSFER SERIALIZER ########
 class ConfirmTransferSerializer(serializers.Serializer):

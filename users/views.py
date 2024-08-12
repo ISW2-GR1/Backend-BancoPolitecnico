@@ -21,11 +21,20 @@ from .models import User
 ###################################################################################
 ##### CREATE USER
 class CreateUserView(generics.CreateAPIView):
-    queryset = User.objects.all()
+    queryset = get_user_model().objects.all()
     serializer_class = UserSerializer
+
     def perform_create(self, serializer):
-        
-        serializer.save()
+        user = serializer.save()
+
+        # Crear la cuenta bancaria con un saldo inicial de 100 dólares
+        BankAccount.objects.create(
+            user=user,
+            account_number=generate_unique_account_number(),
+            balance=100.00,
+            is_active=True,
+            is_primary=True
+        )
         
 ###################################################################################
 ##### VIEW AND UPDATE USERS
@@ -52,6 +61,7 @@ class RetrieveUpdateUserView(generics.RetrieveUpdateAPIView):
 
 ###################################################################################
 ########### CREATE TOKEN
+
 class CreateTokenView(APIView):
     def post(self, request, *args, **kwargs):
         email = request.data.get('email')
@@ -59,21 +69,105 @@ class CreateTokenView(APIView):
 
         user = authenticate(request=request, username=email, password=password)
         if not user:
-            return Response({'detail': 'Invalid credentials'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': 'Credenciales inválidas'}, status=status.HTTP_400_BAD_REQUEST)
 
         if not user.is_active:
-            return Response({'detail': 'Account is inactive'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': 'La cuenta está inactiva'}, status=status.HTTP_400_BAD_REQUEST)
 
-        verification_code = secrets.token_hex(6)
-        user.verification_code = verification_code
-        user.save()
+        # Aquí puedes generar el token que necesites si estás usando JWT u otro sistema
+        # Suponiendo que uses JWT
+        from rest_framework_simplejwt.tokens import RefreshToken
+        refresh = RefreshToken.for_user(user)
+        access_token = str(refresh.access_token)
 
-        subject = 'Your Login Verification Code'
-        message = f'Your new verification code is: {verification_code}'
-        send_mail(subject, message, 'no-reply@example.com', [user.email])
+        # Enviar notificación al correo del usuario
+        subject = 'Confirmación de Ingreso a Banca Web'
+        message = f"""
+        <html>
+            <head>
+                <style>
+                    body {{
+                        font-family: 'Arial', sans-serif;
+                        background-color: #f4f4f4;
+                        color: #333;
+                        margin: 0;
+                        padding: 20px;
+                    }}
+                    .container {{
+                        max-width: 600px;
+                        margin: auto;
+                        background-color: #ffffff;
+                        padding: 30px;
+                        border-radius: 10px;
+                        box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+                        border: 1px solid #e1e1e1;
+                    }}
+                    h1 {{
+                        color: #0056b3;
+                        font-size: 28px;
+                        border-bottom: 2px solid #0056b3;
+                        padding-bottom: 10px;
+                        margin-bottom: 20px;
+                    }}
+                    p {{
+                        font-size: 16px;
+                        line-height: 1.6;
+                        margin: 10px 0;
+                    }}
+                    .details {{
+                        margin-top: 20px;
+                        padding: 15px;
+                        background-color: #f9f9f9;
+                        border-radius: 5px;
+                        border: 1px solid #ddd;
+                    }}
+                    .footer {{
+                        margin-top: 30px;
+                        font-size: 14px;
+                        color: #555;
+                        text-align: center;
+                    }}
+                    .footer a {{
+                        color: #007BFF;
+                        text-decoration: none;
+                    }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>Ingreso a Banca Web</h1>
+                    <p>Hola {user.username},</p>
+                    <p>Tu ingreso se realizó con éxito.</p>
+                    <div class="details">
+                        <p><strong>Detalle:</strong></p>
+                        <p><strong>IP:</strong> {request.META.get('REMOTE_ADDR', 'Desconocida')}</p>
+                        <p><strong>Ubicación:</strong> Ecuador</p>
+                    </div>
+                    <p>Si no has solicitado este servicio, por favor repórtalo a nuestra Banca Telefónica al (02)2999 999.</p>
+                    <div class="footer">
+                        <p>Gracias por utilizar nuestros servicios.</p>
+                        <p>Atentamente,</p>
+                        <p><strong>Banco Politécnico</strong></p>
+                        <p><a href="https://www.banco-politecnico.online">www.banco-politecnico.online</a></p>
+                    </div>
+                </div>
+            </body>
+        </html>
+        """
 
-        return Response({"detail": "Verification code sent to your email."})
+        email = EmailMessage(
+            subject,
+            message,
+            'no-reply@example.com',
+            [user.email]
+        )
+        email.content_subtype = 'html'
+        email.send()
 
+        return Response({
+            'refresh': str(refresh),
+            'access': access_token
+        })
 ###################################################################################
 ###### LOGOUT
 class LogoutView(APIView):
@@ -805,32 +899,45 @@ class TransferSummaryView(APIView):
     
 from .serializers import ContactSerializer
 
+
 class AddContactView(APIView):
     def post(self, request, *args, **kwargs):
-        contact_id = request.data.get('contact')
+        contact_account_id = request.data.get('contact')  # ID de la cuenta bancaria
         contact_account_number = request.data.get('contact_account_number')
         
-        if not contact_id or not contact_account_number:
-            return Response({"error": "Both contact ID and account number are required."},
+        if not contact_account_id or not contact_account_number:
+            return Response({"error": "Ambos, el ID de la cuenta de contacto y el número de cuenta, son requeridos."},
                             status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            contact_user = User.objects.get(id=contact_id)
-        except User.DoesNotExist:
-            return Response({"error": "User with the given ID does not exist."},
+            contact_bank_account = BankAccount.objects.get(id=contact_account_id)
+        except BankAccount.DoesNotExist:
+            return Response({"error": "No existe una cuenta bancaria con el ID proporcionado."},
                             status=status.HTTP_404_NOT_FOUND)
 
-        contact, created = Contact.objects.get_or_create(
+        contact_user = contact_bank_account.user  # Obtener el usuario dueño de la cuenta bancaria
+
+        # Verificar si ya existe un contacto con el mismo número de cuenta
+        existing_contact = Contact.objects.filter(
+            owner=request.user,
+            contact_account_number=contact_account_number
+        ).first()
+
+        if existing_contact:
+            return Response({"error": "Este número de cuenta ya está registrado como contacto."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        
+        # Crear un nuevo contacto
+        contact = Contact.objects.create(
             owner=request.user,
             contact=contact_user,
             contact_account_number=contact_account_number
         )
 
-        if created:
-            return Response(ContactSerializer(contact).data, status=status.HTTP_201_CREATED)
-        else:
-            return Response({"error": "Contact already exists."},
-                            status=status.HTTP_400_BAD_REQUEST)
+        return Response(ContactSerializer(contact).data, status=status.HTTP_201_CREATED)
+
+
+
 
 class DeactivateContactView(APIView):
     def delete(self, request, contact_id, *args, **kwargs):
