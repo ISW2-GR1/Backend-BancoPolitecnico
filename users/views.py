@@ -738,6 +738,10 @@ class RequestAccountDeactivationView(views.APIView):
         # Verificar si la cuenta es la principal
         if account.is_primary:
             return Response({'error': 'Cannot deactivate the primary account'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Verificar si la cuenta ya está desactivada
+        if not account.is_active:
+            return Response({'error': 'La cuenta ya se encuentra desactivada'}, status=status.HTTP_400_BAD_REQUEST)
 
         # Generar el código de verificación
         verification_code = user.generate_verification_code()
@@ -807,13 +811,12 @@ class RequestAccountDeactivationView(views.APIView):
 ######  CONFIRM ACCOUNT DEACTIVATION
 from .serializers import DeactivateAccountRequestSerializer
 class ConfirmAccountDeactivationView(views.APIView):
-    permission_classes = [IsAuthenticated]  # Requiere autenticación
+    permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
         serializer = DeactivateAccountRequestSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
 
-        # Si el serializer es válido, significa que el código de verificación y el número de cuenta son correctos
         user = request.user
         account_number = serializer.validated_data.get('account_number')
         account = BankAccount.objects.filter(user=user, account_number=account_number).first()
@@ -823,15 +826,14 @@ class ConfirmAccountDeactivationView(views.APIView):
 
         if account.is_primary:
             return Response({'error': 'Cannot deactivate the primary account'}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Transferir saldo a la cuenta principal
+        
         primary_account = BankAccount.objects.filter(user=user, is_primary=True).first()
         if primary_account:
             primary_account.balance += account.balance
             primary_account.save()
 
-        # Desactivar la cuenta
         account.is_active = False
+        account.balance = 0
         account.save()
 
         return Response({"detail": "Your account has been deactivated."}, status=status.HTTP_200_OK)
