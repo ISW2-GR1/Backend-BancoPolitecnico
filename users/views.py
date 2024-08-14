@@ -45,7 +45,7 @@ class RetrieveUpdateUserView(generics.RetrieveUpdateAPIView):
     def get_object(self):
         user = self.request.user
         user = get_user_model().objects.prefetch_related(
-            Prefetch('bankaccount_set', queryset=BankAccount.objects.all()),
+            Prefetch('bankaccount_set', queryset=BankAccount.objects.filter(is_active=True)),
             Prefetch('contacts', queryset=Contact.objects.all()),
             Prefetch('sent_transfers', queryset=Transfer.objects.all()),
             Prefetch('received_transfers', queryset=Transfer.objects.all())

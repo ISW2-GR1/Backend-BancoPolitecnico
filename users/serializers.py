@@ -298,8 +298,6 @@ class VerifyLoginCodeSerializer(serializers.Serializer):
         attrs['user'] = user
         return attrs
 
-######################################################################################################
-### TRANSFER SERIALIZER ########
 class TransferSerializer(serializers.ModelSerializer):
     sender_account = serializers.CharField(write_only=True)
     receiver_account = serializers.CharField(write_only=True)
@@ -315,16 +313,27 @@ class TransferSerializer(serializers.ModelSerializer):
         user = self.context['request'].user
         
         try:
+            # Verifica si las cuentas existen
             sender_account = BankAccount.objects.get(account_number=sender_account_number)
             receiver_account = BankAccount.objects.get(account_number=receiver_account_number)
         except BankAccount.DoesNotExist:
-            raise serializers.ValidationError("Sender or receiver account does not exist.")
+            raise serializers.ValidationError("La cuenta del remitente o la del destinatario no existe.")
+        
+        #Verifica si la cuenta del remitente está activa
+        if not sender_account.is_active:
+            raise serializers.ValidationError("La cuenta del remitente está desactivada.")
 
+        # Verifica si el usuario es el propietario de la cuenta del remitente
         if sender_account.user != user:
-            raise serializers.ValidationError("You do not own the sender account.")
+            raise serializers.ValidationError("No eres el propietario de la cuenta del remitente.")
 
-        if receiver_account.user == user:
-            raise serializers.ValidationError("You cannot transfer money to your own account.")
+        # Verifica si el monto es mayor al saldo de la cuenta del remitente
+        if data.get('amount') > sender_account.balance:
+            raise serializers.ValidationError("Fondos insuficientes.")
+        
+        # Verifica si el monto es menor o igual a 0 o si no es un número válido
+        if data.get('amount') <= 0:
+            raise serializers.ValidationError("El monto debe ser mayor a 0.")
         
         return data
 
@@ -422,14 +431,15 @@ class ConfirmTransferSerializer(serializers.Serializer):
         try:
             transfer = Transfer.objects.get(otp=value, otp_expiry__gt=timezone.now())
         except Transfer.DoesNotExist:
-            raise serializers.ValidationError("Invalid or expired OTP.")
+            raise serializers.ValidationError("OTP inválido o expirado.")
         return value
 
     def save(self):
         otp = self.validated_data['otp']
         transfer = Transfer.objects.get(otp=otp)
         if transfer.is_confirmed:
-            raise serializers.ValidationError("Transfer already confirmed.")
+            raise serializers.ValidationError("La transferencia ya ha sido confirmada.")
+        
         transfer.is_confirmed = True
         transfer.save()
 
@@ -438,14 +448,17 @@ class ConfirmTransferSerializer(serializers.Serializer):
         receiver_accounts = BankAccount.objects.filter(user=transfer.receiver)
 
         if not sender_accounts.exists() or not receiver_accounts.exists():
-            raise serializers.ValidationError("Sender or receiver account not found.")
+            raise serializers.ValidationError("Cuenta del remitente o del destinatario no encontrada.")
         
         sender_account = sender_accounts.first()
         receiver_account = receiver_accounts.first()
-
+        
+        # Realizar la transferencia de dinero entre cuentas y guardar los cambios en la base de datos para una transacción atómica
         amount_before_sender = sender_account.balance
-        amount_after_sender = amount_before_sender - transfer.amount
-        amount_after_receiver = receiver_account.balance + transfer.amount
+        amount_before_receiver = receiver_account.balance
+        amount = transfer.amount
+        amount_after_sender = amount_before_sender - amount
+        amount_after_receiver = amount_before_receiver + amount
 
         sender_account.balance = amount_after_sender
         receiver_account.balance = amount_after_receiver
